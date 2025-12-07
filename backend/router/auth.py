@@ -1,18 +1,19 @@
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
+from fastapi import status
 
-from models.auth import UserOrm
-from repositories.auth import UserRepository
-from schemas.auth import ErrorResponse
-from schemas.auth import LoginResponse
-from schemas.auth import LogoutResponse
-from schemas.auth import RefreshResponse
-from schemas.auth import RegisterResponse
-from schemas.auth import SUser
-from schemas.auth import SUserLogin
-from schemas.auth import SUserRegister
-from schemas.auth import ValidationErrorResponse
+from repositories.auth import AuthRepository
+from repositories.user import UserRepository
+from schemas.user import (
+    ErrorResponse,
+    ValidationErrorResponse,
+    TelegramLoginRequest,
+    TokenResponse,
+    RefreshTokenRequest,
+    UserResponse,
+    UserWithTokenResponse
+)
 from utils.security import create_access_token
 from utils.security import get_current_user
 from utils.security import oauth2_scheme
@@ -22,137 +23,87 @@ from utils.security import oauth2_scheme
 
 router = APIRouter(
     prefix="/auth",
-    tags=['Пользователи']
+    tags=['Аутентификация']
 )
-
-
-
-
-@router.post(
-    "/register",
-    response_model=RegisterResponse,
-    status_code=201,
-    responses={
-        400: {"model": ValidationErrorResponse},
-        500: {"model": ErrorResponse}
-    }
-)
-async def register_user(user_data: SUserRegister):
-    """
-    Регистрация нового пользователя.
-    
-    Пароль и подтверждение пароля должны совпадать.
-    Email должен быть уникальным.
-    """
-    try:
-        user_id = await UserRepository.register_user(user_data)
-        
-        return RegisterResponse(
-            success=True,
-            user_id=user_id,
-            message="Регистрация прошла успешно"
-        )
-        
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail="Внутренняя ошибка сервера"
-        )
 
 
 
 
 @router.post(
     "/login",
-    response_model=LoginResponse,
+    response_model=UserWithTokenResponse,
+    status_code=200,
     responses={
-        400: {"model": ErrorResponse, "description": "Неверный email или пароль"},
+        400: {"model": ValidationErrorResponse, "description": "Ошибка аутентификации"},
         500: {"model": ErrorResponse}
     }
 )
-async def login_user(login_data: SUserLogin):
+async def login_user(login_data: TelegramLoginRequest):
     """
-    Вход в систему с получением токенов доступа.
+    Вход в систему через Telegram username.
     
-    При успехе возвращает access_token и refresh_token.
-    Access токен используется для доступа к защищенным эндпоинтам.
-    Refresh токен используется для получения нового access токена.
+    Если пользователь с таким Telegram username не существует, он будет создан.
+    Возвращает информацию о пользователе и JWT токены (access и refresh).
     """
-    try:
-        user = await UserRepository.authenticate_user(login_data.email, login_data.password)
-        
-        if not user:
-            raise HTTPException(status_code=400, detail="Неверный email или пароль")
-        
-        access_token = create_access_token(data={"sub": user.email})
-        refresh_token = await UserRepository.create_refresh_token(user.id)
-        
-        return LoginResponse(
-            success=True,
-            message="Вы вошли в аккаунт",
-            access_token=access_token,
-            refresh_token=refresh_token,
-            token_type="bearer"
-        )
-        
-    except HTTPException:
-        raise
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail="Внутренняя ошибка сервера"
-        )
+    # Ищем пользователя
+    user = await UserRepository.get_user_by_telegram_username(login_data.telegram_username)
+    
+    if not user:
+        # Создаем нового пользователя
+        from schemas.user import UserCreate
+        user_data = UserCreate(telegram_username=login_data.telegram_username)
+        user = await UserRepository.create_user(user_data)
+    
+    # Создаем токены
+    access_token = create_access_token(data={"sub": str(user.id)})
+    refresh_token = await AuthRepository.create_refresh_token(user.id)
+    
+    return UserWithTokenResponse(
+        user=UserResponse.model_validate(user),
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer"
+    )
 
 
 
 
 @router.post(
     "/refresh",
-    response_model=RefreshResponse,
+    response_model=TokenResponse,
     responses={
         400: {"model": ErrorResponse, "description": "Неверный refresh токен"},
         500: {"model": ErrorResponse}
     }
 )
-async def refresh_token(refresh_token: str):
+async def refresh_token(refresh_data: RefreshTokenRequest):
     """
     Обновление access токена с помощью refresh токена.
     
     Refresh токен должен быть валидным и не истекшим.
-    Возвращает новый access токен.
+    Возвращает новый access токен и refresh токен.
     """
-    try:
-        user = await UserRepository.get_user_by_refresh_token(refresh_token)
-        
-        if not user:
-            raise HTTPException(status_code=400, detail="Неверный refresh токен")
-        
-        new_access_token = create_access_token(data={"sub": user.email})
-        
-        return RefreshResponse(
-            access_token=new_access_token,
-            token_type="bearer"
-        )
-        
-    except HTTPException:
-        raise
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail="Внутренняя ошибка сервера"
-        )
+    user = await AuthRepository.get_user_by_refresh_token(refresh_data.refresh_token)
+    
+    if not user:
+        raise HTTPException(status_code=400, detail="Неверный refresh токен")
+    
+    # Создаем новые токены
+    new_access_token = create_access_token(data={"sub": str(user.id)})
+    new_refresh_token = await AuthRepository.create_refresh_token(user.id)
+    
+    return TokenResponse(
+        access_token=new_access_token,
+        refresh_token=new_refresh_token,
+        token_type="bearer"
+    )
 
 
 
 
 @router.post(
     "/logout",
-    response_model=LogoutResponse,
+    response_model=dict,
     responses={
         401: {"model": ErrorResponse, "description": "Не авторизован"},
         500: {"model": ErrorResponse}
@@ -160,7 +111,7 @@ async def refresh_token(refresh_token: str):
 )
 async def logout(
     token: str = Depends(oauth2_scheme),
-    current_user: UserOrm = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     """
     Выход из системы.
@@ -169,41 +120,27 @@ async def logout(
     Refresh токен пользователя отзывается.
     Требует валидный access токен.
     """
-    try:
-        await UserRepository.add_to_blacklist(token)
-        await UserRepository.revoke_refresh_token(current_user.id)
-        
-        return LogoutResponse(success=True)
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail="Внутренняя ошибка сервера"
-        )
+    await AuthRepository.add_to_blacklist(token)
+    await AuthRepository.revoke_refresh_token(current_user.id)
+    
+    return {"success": True, "message": "Вы вышли из системы"}
 
 
 
 
 @router.get(
     "/me",
-    response_model=SUser,
+    response_model=UserResponse,
     responses={
         401: {"model": ErrorResponse, "description": "Не авторизован"},
         500: {"model": ErrorResponse}
     }
 )
-async def get_current_user_info(current_user: UserOrm = Depends(get_current_user)):
+async def get_current_user_info(current_user = Depends(get_current_user)):
     """
     Получение информации о текущем пользователе.
     
     Возвращает данные пользователя из базы данных.
     Требует валидный access токен.
     """
-    try:
-        return SUser.model_validate(current_user)
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail="Внутренняя ошибка сервера"
-        )
+    return UserResponse.model_validate(current_user)

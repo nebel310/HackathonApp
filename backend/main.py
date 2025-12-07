@@ -9,6 +9,8 @@ from fastapi.openapi.utils import get_openapi
 from database import create_tables
 from database import delete_tables
 from router.auth import router as auth_router
+from router.profile import router as profile_router
+from utils.init_test_data import create_test_data
 
 
 
@@ -21,6 +23,9 @@ async def lifespan(app: FastAPI):
     
     await create_tables()
     print('База готова к работе')
+    
+    # Инициализируем тестовые данные
+    await create_test_data()
     
     yield
     
@@ -35,18 +40,17 @@ def custom_openapi():
         return app.openapi_schema
         
     openapi_schema = get_openapi(
-        title="FastAPI Base Template - Разработано Григорьевым Владиславом Алексеевичем",
+        title="Hackathon Platform API",
         version="1.0.0",
-        description="""Базовый шаблон FastAPI с JWT аутентификацией
+        description="""API платформы для организации хакатонов
     
-**Разработчик:** Григорьев Владислав Алексеевич
-**Контакты:** 
-- Телеграм: @vlados7529
-- Телефон: +7 (916) 054 44-35  
-- GitHub: github.com/nebel310
-- Email: m2316174@edu.misis.ru
+**Особенности:**
+- Упрощенная авторизация через Telegram username
+- Управление профилем пользователя
+- Система навыков (тегов)
+- Роли пользователей (user/admin)
 
-*Этот бэкенд был создан как базовый шаблон для быстрого старта проектов*""",
+*Для доступа к защищенным эндпоинтам используйте JWT токен*""",
         routes=app.routes,
     )
     
@@ -58,14 +62,11 @@ def custom_openapi():
         }
     }
     
-    secured_paths = {
-        ("/auth/me", "get"): [{"Bearer": []}],
-        ("/auth/logout", "post"): [{"Bearer": []}],
-    }
-    
-    for (path, method), security in secured_paths.items():
-        if path in openapi_schema["paths"] and method in openapi_schema["paths"][path]:
-            openapi_schema["paths"][path][method]["security"] = security
+    # Защищаем все эндпоинты, кроме /auth/login и /auth/refresh
+    for path in openapi_schema["paths"]:
+        for method in openapi_schema["paths"][path]:
+            if path not in ["/auth/login", "/auth/refresh"]:
+                openapi_schema["paths"][path][method]["security"] = [{"Bearer": []}]
     
     app.openapi_schema = openapi_schema
     
@@ -82,7 +83,7 @@ app.openapi = custom_openapi
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5500"],
+    allow_origins=["http://127.0.0.1:5500", "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -92,6 +93,7 @@ app.add_middleware(
 
 
 app.include_router(auth_router)
+app.include_router(profile_router)
 
 
 

@@ -3,26 +3,11 @@ from datetime import timezone
 
 from sqlalchemy import ForeignKey
 from sqlalchemy import DateTime
+from sqlalchemy import String
 from sqlalchemy.orm import Mapped
 from sqlalchemy.orm import mapped_column
 
 from database import Model
-
-
-
-
-class UserOrm(Model):
-    """Модель пользователя в системе."""
-    __tablename__ = 'users'
-    
-    id: Mapped[int] = mapped_column(primary_key=True)
-    username: Mapped[str]
-    email: Mapped[str] = mapped_column(unique=True, nullable=False)
-    hashed_password: Mapped[str]
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), 
-        default=lambda: datetime.now(timezone.utc)
-    )
 
 
 
