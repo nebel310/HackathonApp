@@ -10,6 +10,8 @@ from database import create_tables
 from database import delete_tables
 from router.auth import router as auth_router
 from router.profile import router as profile_router
+from router.hackathon import router as hackathon_router
+from router.team import router as team_router
 from utils.init_test_data import create_test_data
 
 
@@ -48,6 +50,11 @@ def custom_openapi():
 - Упрощенная авторизация через Telegram username
 - Управление профилем пользователя
 - Система навыков (тегов)
+- Управление хакатонами
+- Регистрация на хакатоны
+- Создание и управление командами
+- Приглашения в команды
+- Поиск пользователей по навыкам
 - Роли пользователей (user/admin)
 
 *Для доступа к защищенным эндпоинтам используйте JWT токен*""",
@@ -94,6 +101,8 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(profile_router)
+app.include_router(hackathon_router)
+app.include_router(team_router)
 
 
 
